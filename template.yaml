@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion : '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Globals:
+  Function:
+    Tags:
+      project: "skeetbot shitposting"
+Resources:
+  AwsWhatsNew:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.13
+      Handler: skeetbot.lambda_handler
+      CodeUri: ./bot
+      Timeout: 200
+      MemorySize: 512
+      Environment:
+        Variables:
+          PostsTableName: !Ref AwsNewsRecentPostsTable
+          PostRecencyThreshold: "7000"
+          POWERTOOLS_SERVICE_NAME: skeetbot
+          POWERTOOLS_LOG_LEVEL: INFO
+      Events:
+        CheckForNewPostsScheduledEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+      Architectures:
+        - arm64
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AwsNewsRecentPostsTable
+        - Statement:
+          -
+            Effect: "Allow"
+            Action:
+              - ssm:GetParameters
+              - ssm:GetParameter
+              - ssm:GetParametersByPath
+            Resource:
+              - '*'
+              - 'arn:aws:ssm:::parameter/skeetbot/*'
+  AwsNewsRecentPostsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: guid
+          AttributeType: S
+      KeySchema:
+        - AttributeName: guid
+          KeyType: HASH
+      Tags:
+        - Value: "skeetbot shitposting"
+          Key: "project"
