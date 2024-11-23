@@ -13,7 +13,7 @@ Resources:
       Handler: skeetbot.lambda_handler
       CodeUri: ./bot
       Timeout: 200
-      MemorySize: 512
+      MemorySize: 624
       Environment:
         Variables:
           PostsTableName: !Ref AwsNewsRecentPostsTable
