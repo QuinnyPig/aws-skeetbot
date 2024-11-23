@@ -8,21 +8,34 @@ from aws_lambda_powertools import Logger
 from strip_tags import strip_tags
 from atproto.exceptions import RequestException
 
+
 # Custom exception for rate limit exceeded
 class RateLimitExceededError(Exception):
     pass
 
+
+# This should be all the stuff you need to change if you want to customize this any
+USERNAME_PARAM = os.environ.get(
+    "SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME"
+)
+PASSWORD_PARAM = os.environ.get(
+    "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
+)
+RSS_FEED_URL = os.environ.get("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
+REGION = "us-west-2"
+
 # Setting these up here so that they're only loaded once per function instantiation
 ssm_provider = parameters.SSMProvider()
-USERNAME = ssm_provider.get("/skeetbot/SKEETBOT_USERNAME", decrypt=True)
-APP_PASSWORD = ssm_provider.get("/skeetbot/SKEETBOT_PASSWORD", decrypt=True)
-posts_table = boto3.resource("dynamodb", region_name="us-west-2").Table(
+USERNAME = ssm_provider.get(USERNAME_PARAM, decrypt=True)
+APP_PASSWORD = ssm_provider.get(PASSWORD_PARAM, decrypt=True)
+posts_table = boto3.resource("dynamodb", region_name=REGION).Table(
     os.environ["PostsTableName"]
 )
 recency_threshold = int(os.environ["PostRecencyThreshold"])
 logger = Logger()
 client = Client()
 client.login(USERNAME, APP_PASSWORD)
+
 
 # Truncating mid-word feels unnatural, so we'll trim to the last word instead.
 def trim_to_last_word(text, max_length):
@@ -31,13 +44,16 @@ def trim_to_last_word(text, max_length):
     trimmed = text[:max_length].rsplit(" ", 1)[0].rstrip(",")
     return trimmed
 
+
 # Check if the given time is within the specified number of minutes from now
 def within(t: time.struct_time, minutes: int) -> bool:
     return abs(time.mktime(time.gmtime()) - time.mktime(t)) <= (minutes * 60)
 
+
 # Check if the post with the given GUID has already been posted
 def already_posted(guid: str) -> bool:
     return "Item" in posts_table.get_item(Key={"guid": guid})
+
 
 # Post the entry to the client
 def skeetit(entry, trim: int):
@@ -61,9 +77,12 @@ def skeetit(entry, trim: int):
         raise err
     return text
 
+
 # Process each entry from the feed
 def process_entry(entry):
-    if within(entry.published_parsed, minutes=recency_threshold) and not already_posted(entry.guid):
+    if within(entry.published_parsed, minutes=recency_threshold) and not already_posted(
+        entry.guid
+    ):
         logger.info(f"Posting {entry.guid} - {entry.title}")
         trim = 290
         while trim >= 100:
@@ -87,14 +106,16 @@ def process_entry(entry):
                     break
                 trim -= 15
                 if trim < 100:
-                    logger.error(f"Failed to post {entry.guid} after multiple attempts.")
+                    logger.error(
+                        f"Failed to post {entry.guid} after multiple attempts."
+                    )
         return True
     return False
+
 
 # Lambda handler function
 @logger.inject_lambda_context
 def lambda_handler(event, context):
-    for entry in feedparser.parse("http://aws.amazon.com/new/feed/").entries:
+    for entry in feedparser.parse(RSS_FEED_URL).entries:
         if not process_entry(entry):
             break
-
