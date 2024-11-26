@@ -66,7 +66,7 @@ if cloudsplain_it:
     import anthropic
 
     ANTHROPIC_API_KEY = ssm_provider.get(ANTHROPIC_API_KEY, decrypt=True)
-    client = anthropic.Anthropic(
+    ai_client = anthropic.Anthropic(
         # defaults to os.environ.get("ANTHROPIC_API_KEY")
         api_key=ANTHROPIC_API_KEY,
     )
@@ -75,7 +75,7 @@ if cloudsplain_it:
     # We're using Anthropic directly intead of Bedrock because I
     # don't believe in rewarding bad behavior.
     def cloudsplain(text, trim: int):
-        message = client.messages.create(
+        message = ai_client.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
@@ -92,8 +92,8 @@ if cloudsplain_it:
                 }
             ],
         )
-        logger.info(f"Claude summarizing to {trim}: {message.content}")
-        return message.content
+        logger.info(f"Claude summarizing to {trim}: {message.content[0].text}")
+        return message.content[0].text
 
 
 # Post the entry to the client
