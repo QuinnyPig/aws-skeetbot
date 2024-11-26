@@ -4,9 +4,10 @@ import boto3
 from aws_lambda_powertools.utilities import parameters
 import time
 import feedparser
-from aws_lambda_powertools import Logger
+from aws_lambda_powertools import Logger, Metrics
 from strip_tags import strip_tags
 from atproto.exceptions import RequestException
+from aws_lambda_powertools.metrics import MetricUnit
 
 
 # Function to fetch environment variables with default values
@@ -42,6 +43,9 @@ recency_threshold = int(os.environ["PostRecencyThreshold"])
 logger = Logger()
 client = Client()
 client.login(USERNAME, APP_PASSWORD)
+metrics = Metrics(namespace="SkeetBotMetrics")
+anthropic_counter = 0
+items = 0
 
 
 # Truncating mid-word feels unnatural, so we'll trim to the last word instead.
@@ -49,6 +53,7 @@ def trim_to_last_word(text, max_length):
     if len(text) <= max_length:
         return text
     trimmed = text[:max_length].rsplit(" ", 1)[0].rstrip(",")
+    trimmed = trimmed + "…"
     return trimmed
 
 
@@ -75,11 +80,13 @@ if cloudsplain_it:
     # We're using Anthropic directly intead of Bedrock because I
     # don't believe in rewarding bad behavior.
     def cloudsplain(text, trim: int):
+        global anthropic_counter
+        anthropic_counter += 1
         message = ai_client.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
-            system="If the supplied prompt is empty or contains garbage, return an empty set instead of a refusal.",
+            system="Do not announce what you are doing, simply do it. DO NOT LABEL IT AS A CLAUDE SUMMARY. If the supplied prompt is empty or contains garbage, return an empty set instead of a refusal.",
             messages=[
                 {
                     "role": "user",
@@ -105,7 +112,6 @@ def skeetit(entry, payload):
         .link(entry.title, entry.link)
         .text("\n\n")
         .text(payload)
-        .text("…")
     )
     try:
         client.send_post(text)
@@ -127,6 +133,8 @@ def process_entry(entry):
         entry.guid
     ):
         logger.info(f"Processing {entry.guid} - {entry.title}")
+        global items
+        items += 1
         trim = 295 - len(entry.title)  # 300 max minus \n\n and …
         while trim >= 100:
             try:
@@ -161,8 +169,14 @@ def process_entry(entry):
 
 
 # Lambda handler function
+@metrics.log_metrics()
 @logger.inject_lambda_context
 def lambda_handler(event, context):
+    global anthropic_counter
     for entry in feedparser.parse(RSS_FEED_URL).entries:
         if not process_entry(entry):
             break
+    metrics.add_metric(
+        name="AnthropicRequests", unit=MetricUnit.Count, value=anthropic_counter
+    )
+    metrics.add_metric(name="ItemsProcessed", unit=MetricUnit.Count, value=items)
