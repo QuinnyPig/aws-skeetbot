@@ -9,6 +9,11 @@ from strip_tags import strip_tags
 from atproto.exceptions import RequestException
 
 
+# Function to fetch environment variables with default values
+def get_env_var(name, default):
+    return os.environ.get(name, default)
+
+
 # Custom exception for rate limit exceeded
 class RateLimitExceededError(Exception):
     pass
@@ -19,15 +24,11 @@ cloudsplain_it = True
 
 
 # This should be all the stuff you need to change if you want to customize this any
-USERNAME_PARAM = os.environ.get(
-    "SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME"
-)
-PASSWORD_PARAM = os.environ.get(
-    "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
-)
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
+USERNAME_PARAM = get_env_var("SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME")
+PASSWORD_PARAM = get_env_var("SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD")
+ANTHROPIC_API_KEY = get_env_var("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
 
-RSS_FEED_URL = os.environ.get("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
+RSS_FEED_URL = get_env_var("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
 
 # Setting these up here so that they're only loaded once per function instantiation
@@ -64,9 +65,10 @@ def already_posted(guid: str) -> bool:
 if cloudsplain_it:
     import anthropic
 
+    ANTHROPIC_API_KEY = ssm_provider.get(ANTHROPIC_API_KEY, decrypt=True)
     client = anthropic.Anthropic(
         # defaults to os.environ.get("ANTHROPIC_API_KEY")
-        api_key="my_api_key",
+        api_key=ANTHROPIC_API_KEY,
     )
 
     # AWS is bad at explaining itself so we'll tag in AI to help.
@@ -111,7 +113,10 @@ def skeetit(entry, payload):
         if err.response.status_code == 429:
             logger.error("Rate limit exceeded.")
             raise RateLimitExceededError("Rate limit exceeded.")
-        logger.error(f"Failed to post {entry.guid} after multiple attempts.")
+        logger.error(f"Failed to post {entry.guid} due to request exception: {err}")
+        raise err
+    except Exception as err:
+        logger.error(f"Unexpected error while posting {entry.guid}: {err}")
         raise err
     return text
 
@@ -121,7 +126,7 @@ def process_entry(entry):
     if within(entry.published_parsed, minutes=recency_threshold) and not already_posted(
         entry.guid
     ):
-        logger.info(f"Posting {entry.guid} - {entry.title}")
+        logger.info(f"Processing {entry.guid} - {entry.title}")
         trim = 295 - len(entry.title)  # 300 max minus \n\n and …
         while trim >= 100:
             try:
