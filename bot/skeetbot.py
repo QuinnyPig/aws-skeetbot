@@ -14,6 +14,10 @@ class RateLimitExceededError(Exception):
     pass
 
 
+# disable this if you don't want to enable degenerative AI summarization
+cloudsplain_it = True
+
+
 # This should be all the stuff you need to change if you want to customize this any
 USERNAME_PARAM = os.environ.get(
     "SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME"
@@ -21,6 +25,8 @@ USERNAME_PARAM = os.environ.get(
 PASSWORD_PARAM = os.environ.get(
     "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
 )
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
+
 RSS_FEED_URL = os.environ.get("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
 
@@ -55,9 +61,41 @@ def already_posted(guid: str) -> bool:
     return "Item" in posts_table.get_item(Key={"guid": guid})
 
 
+if cloudsplain_it:
+    import anthropic
+
+    client = anthropic.Anthropic(
+        # defaults to os.environ.get("ANTHROPIC_API_KEY")
+        api_key="my_api_key",
+    )
+
+    # AWS is bad at explaining itself so we'll tag in AI to help.
+    # We're using Anthropic directly intead of Bedrock because I
+    # don't believe in rewarding bad behavior.
+    def cloudsplain(text, trim: int):
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=1000,
+            temperature=0,
+            system="If the supplied prompt is empty or contains garbage, return an empty set instead of a refusal.",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Summarize this text in {trim} characters or less:  \n {text}",
+                        }
+                    ],
+                }
+            ],
+        )
+        logger.info(f"Claude summarizing to {trim}: {message.content}")
+        return message.content
+
+
 # Post the entry to the client
-def skeetit(entry, trim: int):
-    payload = trim_to_last_word(strip_tags(entry.description), trim)
+def skeetit(entry, payload):
     logger.info(f"Posting {entry.guid} - {entry.title}")
     logger.info(f"Link length: {len(entry.link)}")
     text = (
@@ -84,10 +122,14 @@ def process_entry(entry):
         entry.guid
     ):
         logger.info(f"Posting {entry.guid} - {entry.title}")
-        trim = 290
+        trim = 295 - len(entry.title)  # 300 max minus \n\n and …
         while trim >= 100:
             try:
-                skeetit(entry, trim)
+                if cloudsplain_it:
+                    payload = cloudsplain(entry.description, trim)
+                else:
+                    payload = trim_to_last_word(strip_tags(entry.description), trim)
+                skeetit(entry, payload)
                 posts_table.put_item(
                     Item={
                         "guid": entry.guid,
