@@ -4,9 +4,15 @@ import boto3
 from aws_lambda_powertools.utilities import parameters
 import time
 import feedparser
-from aws_lambda_powertools import Logger
+from aws_lambda_powertools import Logger, Metrics
 from strip_tags import strip_tags
 from atproto.exceptions import RequestException
+from aws_lambda_powertools.metrics import MetricUnit
+
+
+# Function to fetch environment variables with default values
+def get_env_var(name, default):
+    return os.environ.get(name, default)
 
 
 # Custom exception for rate limit exceeded
@@ -19,15 +25,11 @@ cloudsplain_it = True
 
 
 # This should be all the stuff you need to change if you want to customize this any
-USERNAME_PARAM = os.environ.get(
-    "SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME"
-)
-PASSWORD_PARAM = os.environ.get(
-    "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
-)
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
+USERNAME_PARAM = get_env_var("SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME")
+PASSWORD_PARAM = get_env_var("SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD")
+ANTHROPIC_API_KEY = get_env_var("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
 
-RSS_FEED_URL = os.environ.get("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
+RSS_FEED_URL = get_env_var("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
 
 # Setting these up here so that they're only loaded once per function instantiation
@@ -41,6 +43,9 @@ recency_threshold = int(os.environ["PostRecencyThreshold"])
 logger = Logger()
 client = Client()
 client.login(USERNAME, APP_PASSWORD)
+metrics = Metrics(namespace="SkeetBotMetrics")
+anthropic_counter = 0
+items = 0
 
 
 # Truncating mid-word feels unnatural, so we'll trim to the last word instead.
@@ -48,6 +53,7 @@ def trim_to_last_word(text, max_length):
     if len(text) <= max_length:
         return text
     trimmed = text[:max_length].rsplit(" ", 1)[0].rstrip(",")
+    trimmed = trimmed + "…"
     return trimmed
 
 
@@ -64,20 +70,23 @@ def already_posted(guid: str) -> bool:
 if cloudsplain_it:
     import anthropic
 
-    client = anthropic.Anthropic(
+    ANTHROPIC_API_KEY = ssm_provider.get(ANTHROPIC_API_KEY, decrypt=True)
+    ai_client = anthropic.Anthropic(
         # defaults to os.environ.get("ANTHROPIC_API_KEY")
-        api_key="my_api_key",
+        api_key=ANTHROPIC_API_KEY,
     )
 
     # AWS is bad at explaining itself so we'll tag in AI to help.
     # We're using Anthropic directly intead of Bedrock because I
     # don't believe in rewarding bad behavior.
     def cloudsplain(text, trim: int):
-        message = client.messages.create(
+        global anthropic_counter
+        anthropic_counter += 1
+        message = ai_client.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
-            system="If the supplied prompt is empty or contains garbage, return an empty set instead of a refusal.",
+            system="Do not announce what you are doing, simply do it. DO NOT LABEL IT AS A CLAUDE SUMMARY. If the supplied prompt is empty or contains garbage, return an empty set instead of a refusal.",
             messages=[
                 {
                     "role": "user",
@@ -90,8 +99,8 @@ if cloudsplain_it:
                 }
             ],
         )
-        logger.info(f"Claude summarizing to {trim}: {message.content}")
-        return message.content
+        logger.info(f"Claude summarizing to {trim}: {message.content[0].text}")
+        return message.content[0].text
 
 
 # Post the entry to the client
@@ -103,7 +112,6 @@ def skeetit(entry, payload):
         .link(entry.title, entry.link)
         .text("\n\n")
         .text(payload)
-        .text("…")
     )
     try:
         client.send_post(text)
@@ -111,7 +119,10 @@ def skeetit(entry, payload):
         if err.response.status_code == 429:
             logger.error("Rate limit exceeded.")
             raise RateLimitExceededError("Rate limit exceeded.")
-        logger.error(f"Failed to post {entry.guid} after multiple attempts.")
+        logger.error(f"Failed to post {entry.guid} due to request exception: {err}")
+        raise err
+    except Exception as err:
+        logger.error(f"Unexpected error while posting {entry.guid}: {err}")
         raise err
     return text
 
@@ -121,7 +132,9 @@ def process_entry(entry):
     if within(entry.published_parsed, minutes=recency_threshold) and not already_posted(
         entry.guid
     ):
-        logger.info(f"Posting {entry.guid} - {entry.title}")
+        logger.info(f"Processing {entry.guid} - {entry.title}")
+        global items
+        items += 1
         trim = 295 - len(entry.title)  # 300 max minus \n\n and …
         while trim >= 100:
             try:
@@ -152,12 +165,18 @@ def process_entry(entry):
                         f"Failed to post {entry.guid} after multiple attempts."
                     )
         return True
-    return False
+    return True
 
 
 # Lambda handler function
+@metrics.log_metrics()
 @logger.inject_lambda_context
 def lambda_handler(event, context):
+    global anthropic_counter
     for entry in feedparser.parse(RSS_FEED_URL).entries:
         if not process_entry(entry):
             break
+    metrics.add_metric(
+        name="AnthropicRequests", unit=MetricUnit.Count, value=anthropic_counter
+    )
+    metrics.add_metric(name="ItemsProcessed", unit=MetricUnit.Count, value=items)
