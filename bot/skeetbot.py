@@ -31,7 +31,7 @@ USERNAME_PARAM = os.environ.get(
 PASSWORD_PARAM = os.environ.get(
     "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
 )
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY_PARAM = os.environ.get("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
 
 RSS_FEED_URL = get_env_var("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
@@ -40,6 +40,7 @@ REGION = "us-west-2"
 ssm_provider = parameters.SSMProvider()
 USERNAME = ssm_provider.get(USERNAME_PARAM, decrypt=True)
 APP_PASSWORD = ssm_provider.get(PASSWORD_PARAM, decrypt=True)
+ANTHROPIC_API_KEY = ssm_provider.get(ANTHROPIC_API_KEY_PARAM, decrypt=True)
 posts_table = boto3.resource("dynamodb", region_name=REGION).Table(
     os.environ["PostsTableName"]
 )
@@ -76,7 +77,7 @@ if cloudsplain_it:
 
     ai_client = anthropic.Anthropic(
         # defaults to os.environ.get("ANTHROPIC_API_KEY")
-        api_key="my_api_key",
+        api_key=ANTHROPIC_API_KEY,
     )
 
     # AWS is bad at explaining itself so we'll tag in AI to help.
