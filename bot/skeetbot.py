@@ -27,7 +27,7 @@ cloudsplain_it = True
 # This should be all the stuff you need to change if you want to customize this any
 USERNAME_PARAM = get_env_var("SKEETBOT_USERNAME_PARAM", "/skeetbot/SKEETBOT_USERNAME")
 PASSWORD_PARAM = get_env_var("SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD")
-ANTHROPIC_API_KEY = get_env_var("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY_PARAM = get_env_var("ANTHROPIC_API_KEY_PARAM", "/skeetbot/ANTHROPIC_API_KEY")
 
 RSS_FEED_URL = get_env_var("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
@@ -70,10 +70,10 @@ def already_posted(guid: str) -> bool:
 if cloudsplain_it:
     import anthropic
 
-    ANTHROPIC_API_KEY = ssm_provider.get(ANTHROPIC_API_KEY, decrypt=True)
+    anthropic_api_key = ssm_provider.get(ANTHROPIC_API_KEY_PARAM, decrypt=True)
     ai_client = anthropic.Anthropic(
         # defaults to os.environ.get("ANTHROPIC_API_KEY")
-        api_key=ANTHROPIC_API_KEY,
+        api_key=anthropic_api_key,
     )
 
     # AWS is bad at explaining itself so we'll tag in AI to help.
