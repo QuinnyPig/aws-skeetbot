@@ -31,7 +31,9 @@ USERNAME_PARAM = os.environ.get(
 PASSWORD_PARAM = os.environ.get(
     "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
 )
-ANTHROPIC_API_KEY_PARAM = os.environ.get("ANTHROPIC_API_KEY_PARAM", "/skeetbot/ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY_PARAM = os.environ.get(
+    "ANTHROPIC_API_KEY_PARAM", "/skeetbot/ANTHROPIC_API_KEY"
+)
 
 RSS_FEED_URL = get_env_var("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
@@ -89,7 +91,7 @@ if cloudsplain_it:
         if anthropic_counter is not None:
             anthropic_counter += 1
         message = ai_client.messages.create(
-            model="claude-3-5-sonnet-20240620",
+            model="claude-sonnet-4-20250514",
             max_tokens=1000,
             temperature=0,
             system="Do not announce what you are doing, simply do it. DO NOT LABEL IT AS A CLAUDE SUMMARY. If the supplied prompt is empty or contains garbage, return an empty set instead of a refusal.",

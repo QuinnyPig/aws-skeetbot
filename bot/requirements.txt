@@ -15,7 +15,7 @@ dnspython==2.7.0
 feedparser==6.0.11
 h11==0.16.0
 html5lib==1.1
-httpcore==1.0.7
+httpcore==1.0.9
 httpx==0.27.2
 idna==3.10
 jiter==0.8.0
