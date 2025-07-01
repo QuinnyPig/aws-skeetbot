@@ -31,7 +31,7 @@ USERNAME_PARAM = os.environ.get(
 PASSWORD_PARAM = os.environ.get(
     "SKEETBOT_PASSWORD_PARAM", "/skeetbot/SKEETBOT_PASSWORD"
 )
-ANTHROPIC_API_KEY_PARAM = os.environ.get("ANTHROPIC_API_KEY", "/skeetbot/ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY_PARAM = os.environ.get("ANTHROPIC_API_KEY_PARAM", "/skeetbot/ANTHROPIC_API_KEY")
 
 RSS_FEED_URL = get_env_var("RSS_FEED_URL", "http://aws.amazon.com/new/feed/")
 REGION = "us-west-2"
@@ -49,8 +49,9 @@ logger = Logger()
 client = Client()
 client.login(USERNAME, APP_PASSWORD)
 metrics = Metrics(namespace="SkeetBotMetrics")
-anthropic_counter = 0
-items = 0
+# These will be initialized in the lambda handler to prevent accumulation across invocations
+anthropic_counter = None
+items = None
 
 
 # Truncating mid-word feels unnatural, so we'll trim to the last word instead.
@@ -85,7 +86,8 @@ if cloudsplain_it:
     # don't believe in rewarding bad behavior.
     def cloudsplain(text, trim: int):
         global anthropic_counter
-        anthropic_counter += 1
+        if anthropic_counter is not None:
+            anthropic_counter += 1
         message = ai_client.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
@@ -138,9 +140,12 @@ def process_entry(entry):
     ):
         logger.info(f"Processing {entry.guid} - {entry.title}")
         global items
-        items += 1
+        if items is not None:
+            items += 1
         trim = 295 - len(entry.title)  # 300 max minus \n\n and …
-        while trim >= 100:
+        retry_count = 0
+        max_retries = 5  # Limit retries to prevent excessive API calls
+        while trim >= 100 and retry_count < max_retries:
             try:
                 if cloudsplain_it:
                     payload = cloudsplain(entry.description, trim)
@@ -164,9 +169,10 @@ def process_entry(entry):
                     logger.warning("Rate limited, backing off.")
                     break
                 trim -= 15
-                if trim < 100:
+                retry_count += 1
+                if trim < 100 or retry_count >= max_retries:
                     logger.error(
-                        f"Failed to post {entry.guid} after multiple attempts."
+                        f"Failed to post {entry.guid} after {retry_count} attempts."
                     )
         return True
     return True
@@ -176,7 +182,10 @@ def process_entry(entry):
 @metrics.log_metrics()
 @logger.inject_lambda_context
 def lambda_handler(event, context):
-    global anthropic_counter
+    global anthropic_counter, items
+    # Initialize counters for each invocation
+    anthropic_counter = 0
+    items = 0
     for entry in feedparser.parse(RSS_FEED_URL).entries:
         if not process_entry(entry):
             break
